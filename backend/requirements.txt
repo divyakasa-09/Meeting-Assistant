@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+websockets
+numpy
+openai-whisper
+python-multipart

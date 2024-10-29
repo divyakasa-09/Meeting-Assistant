@@ -1,0 +1,31 @@
+{
+    "manifest_version": 3,
+    "name": "Meeting Assistant",
+    "version": "1.0",
+    "description": "Capture and transcribe Zoom meetings",
+    "permissions": [
+      "tabCapture",
+      "activeTab",
+      "storage"
+    ],
+    "host_permissions": [
+      "https://*.zoom.us/*",
+      "http://localhost:5173/*",
+      "ws://localhost:8000/*"
+    ],
+    "background": {
+      "service_worker": "background.js"
+    },
+    "content_scripts": [
+      {
+        "matches": ["https://*.zoom.us/j/*", "https://*.zoom.us/s/*"],
+        "js": ["content.js"]
+      }
+    ],
+    "action": {
+      "default_popup": "popup/popup.html",
+      "default_icon": {
+        "16": "icons/icon16.png"
+      }
+    }
+  }

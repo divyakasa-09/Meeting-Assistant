@@ -1,0 +1,97 @@
+.container {
+    width: 300px;
+    padding: 16px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  }
+  
+  h2 {
+    margin: 0 0 16px 0;
+    color: #1a1a1a;
+    font-size: 18px;
+  }
+  
+  .status-container {
+    display: flex;
+    align-items: center;
+    margin-bottom: 16px;
+    padding: 8px;
+    background: #f5f5f5;
+    border-radius: 4px;
+  }
+  
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #dc2626;
+    margin-right: 8px;
+  }
+  
+  .status-dot.connected {
+    background: #22c55e;
+  }
+  
+  .button-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .button {
+    width: 100%;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: background-color 0.2s;
+  }
+  
+  .button.primary {
+    background: #0f172a;
+    color: white;
+  }
+  
+  .button.primary:hover {
+    background: #1e293b;
+  }
+  
+  .button.secondary {
+    background: #e5e7eb;
+    color: #1f2937;
+  }
+  
+  .button.secondary:hover {
+    background: #d1d5db;
+  }
+  
+  .meeting-info {
+    margin-top: 16px;
+    padding: 8px;
+    background: #f5f5f5;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+  
+  .meeting-info p {
+    margin: 0;
+    color: #6b7280;
+  }
+  
+  .meeting-info span {
+    font-weight: 500;
+    color: #1f2937;
+  }
+  
+  .hidden {
+    display: none;
+  }
+  
+  .recording .button.primary {
+    background: #dc2626;
+  }
+  
+  .recording .button.primary:hover {
+    background: #b91c1c;
+  }
