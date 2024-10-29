@@ -2,3 +2,7 @@ speech-ti-text-api-78b831c14dd3.json
 node_modules
 venv/
 backend/venv/
+venv/
+backend/venv/
+*.dylib
+*.pkl
