@@ -17,7 +17,51 @@ class ActionItem(ActionItemBase):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
+
+class TranscriptSegmentBase(BaseModel):
+    text: str
+    speaker: Optional[str] = None
+    confidence: Optional[float] = None
+
+class TranscriptSegmentCreate(TranscriptSegmentBase):
+    pass
+
+class TranscriptSegment(TranscriptSegmentBase):
+    id: int
+    meeting_id: int
+    timestamp: datetime
+
+    class Config:
+        from_attributes = True
+
+class SummaryBase(BaseModel):
+    summary_text: str
+
+class SummaryCreate(SummaryBase):
+    pass
+
+class Summary(SummaryBase):
+    id: int
+    meeting_id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class FollowUpQuestionBase(BaseModel):
+    question_text: str
+
+class FollowUpQuestionCreate(FollowUpQuestionBase):
+    pass
+
+class FollowUpQuestion(FollowUpQuestionBase):
+    id: int
+    meeting_id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 class MeetingBase(BaseModel):
     title: Optional[str] = None
@@ -30,9 +74,11 @@ class Meeting(MeetingBase):
     id: int
     start_time: datetime
     end_time: Optional[datetime] = None
-    summary: Optional[str] = None
-    action_items: List[ActionItem] = []
     is_active: bool
+    transcripts: List[TranscriptSegment] = []
+    summaries: List[Summary] = []
+    action_items: List[ActionItem] = []
+    follow_up_questions: List[FollowUpQuestion] = []
 
     class Config:
-        orm_mode = True
+        from_attributes = True

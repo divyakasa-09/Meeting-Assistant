@@ -24,7 +24,7 @@ dist-ssr
 *.sw?
 
 node_modules
-speech-ti-text-api-78b831c14dd3.json
+speech-ti-text-api-a7d7589cc9cd.json
 venv/
 backend/venv/
 venv/
