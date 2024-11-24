@@ -62,12 +62,14 @@ async def handle_transcript(meeting_id: str, transcript_data: dict, db: Session)
 
             # Create transcript with the correct meeting ID
             transcript = TranscriptSegment(
-                meeting_id=meeting.id,
-                text=transcript_data["text"],
-                timestamp=datetime.now(UTC),
-                confidence=transcript_data.get("confidence"),
-                speaker=transcript_data.get("speaker")
-            )
+             meeting_id=meeting.id,
+             text=transcript_data["text"],
+             timestamp=datetime.now(UTC),
+             confidence=transcript_data.get("confidence"),
+             speaker=transcript_data.get("speaker"),
+             audio_type=transcript_data.get("audioType", "microphone"),  # Default to 'microphone'
+                ) 
+
             
             logger.info(f"Created transcript: {transcript.text[:50]}...")
             
@@ -141,13 +143,11 @@ async def websocket_endpoint(
                 message = await websocket.receive()
                 
                 if "bytes" in message:
-                    logger.info(f"Received audio chunk from client {client_id}")
-                    await processor.process_chunk(message["bytes"], "microphone")
+                    await processor.process_chunk(message["bytes"], "microphone")  # Microphone audio
                 elif "text" in message:
-                    data = json.loads(message["text"])
-                    logger.info(f"Received text message from client {client_id}: {data.get('type', 'unknown')}")
-                    if data.get("type") == "system_audio":
-                        await processor.process_chunk(data["audio"], "system")
+                   data = json.loads(message["text"])
+                   if data.get("type") == "system_audio":
+                      await processor.process_chunk(data["audio"], "system")  # System audio
 
             except WebSocketDisconnect:
                 logger.info(f"WebSocket disconnected for client: {client_id}")

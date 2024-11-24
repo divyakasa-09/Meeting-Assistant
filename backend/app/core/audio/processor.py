@@ -49,25 +49,11 @@ class EnhancedAudioProcessor:
     def _process_audio(self):
         """Main audio processing loop"""
         try:
-            # Create a new event loop for this thread
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-            streaming_config = speech.StreamingRecognitionConfig(
-                config=speech.RecognitionConfig(
-                    encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-                    sample_rate_hertz=16000,
-                    language_code="en-US",
-                    enable_automatic_punctuation=True,
-                    use_enhanced=True,
-                ),
-                interim_results=True
-            )
-
+            # Generate audio requests
             def request_generator():
                 while self.is_running:
                     try:
-                        chunk = self.audio_queue.get(timeout=1)
+                        audio_type, chunk = self.audio_queue.get(timeout=1)
                         yield speech.StreamingRecognizeRequest(audio_content=chunk)
                     except queue.Empty:
                         continue
@@ -75,8 +61,19 @@ class EnhancedAudioProcessor:
                         logger.error(f"Error in request generator: {e}")
                         break
 
+            # Configure streaming recognition
+            streaming_config = speech.StreamingRecognitionConfig(
+                config=speech.RecognitionConfig(
+                    encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+                    sample_rate_hertz=16000,
+                    language_code="en-US",
+                ),
+                interim_results=True,
+            )
+
             responses = self.speech_client.streaming_recognize(streaming_config, request_generator())
 
+            # Process responses
             for response in responses:
                 if not self.is_running:
                     break
@@ -97,10 +94,11 @@ class EnhancedAudioProcessor:
                     "type": "transcript",
                     "text": transcript,
                     "is_final": is_final,
-                    "confidence": confidence
+                    "confidence": confidence,
+                    "audioType": "microphone",  # Example type, could be 'system' or 'microphone'
                 }
 
-                # Schedule the coroutine in the main event loop
+                # Send transcript through WebSocket
                 future = asyncio.run_coroutine_threadsafe(
                     self.send_websocket_message(message),
                     self.loop
@@ -126,18 +124,21 @@ class EnhancedAudioProcessor:
                 )
                 future.result()
         finally:
-            loop.close()
+            self.is_running = False
 
-    async def process_chunk(self, audio_data: bytes, stream_type: str = "microphone"):
+    async def process_chunk(self, audio_data: bytes, audio_type: str = "microphone"):
         """Process a new chunk of audio data"""
         try:
-            if stream_type == "microphone":
-                self.audio_queue.put(audio_data)
-            
+            if audio_type not in ["microphone", "system"]:
+                raise ValueError(f"Unknown audio type: {audio_type}")
+        
+            # Add to audio queue with type
+            self.audio_queue.put((audio_type, audio_data))
+        
             result = await self.stream_manager.process_audio_chunk(self.client_id, audio_data)
             return True
         except Exception as e:
-            logger.error(f"Error processing audio chunk: {e}")
+            logger.error(f"Error processing audio chunk ({audio_type}): {e}")
             return False
 
     async def stop(self):

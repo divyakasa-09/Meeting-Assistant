@@ -1,89 +1,67 @@
 export class AudioRecorder {
-    private mediaRecorder: MediaRecorder | null = null;
-    private stream: MediaStream | null = null;
-    private websocket: WebSocket | null = null;
-    private clientId: string;
-    private onTranscriptCallback: ((text: string) => void) | null = null;
-  
-    constructor() {
-      this.clientId = crypto.randomUUID();
-    }
-  
-    async startRecording(onTranscript: (text: string) => void): Promise<void> {
-      try {
-        this.onTranscriptCallback = onTranscript;
-        
-        // Request audio with specific constraints
-        this.stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,          // Mono audio
-            sampleRate: 16000,        // 16 kHz sample rate
-            echoCancellation: true,   // Enable echo cancellation
-            noiseSuppression: true,   // Enable noise suppression
-          }
-        });
-  
-        // Connect to WebSocket with client ID
-        this.websocket = new WebSocket(`ws://localhost:8000/ws/${this.clientId}`);
-        
-        this.websocket.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            if (data.type === 'transcript' && this.onTranscriptCallback) {
-              this.onTranscriptCallback(data.text);
-            } else if (data.type === 'error') {
-              console.error('Server error:', data.message);
-            }
-          } catch (error) {
-            console.error('Error parsing WebSocket message:', error);
-          }
-        };
-  
-        this.websocket.onerror = (error) => {
-          console.error('WebSocket error:', error);
-        };
-  
-        // Create MediaRecorder with specific MIME type
-        this.mediaRecorder = new MediaRecorder(this.stream, {
-          mimeType: 'audio/webm;codecs=opus'
-        });
-        
-        this.mediaRecorder.ondataavailable = async (event) => {
-          if (event.data.size > 0 && this.websocket?.readyState === WebSocket.OPEN) {
-            // Convert to raw audio data before sending
-            const arrayBuffer = await event.data.arrayBuffer();
-            this.websocket.send(arrayBuffer);
-          }
-        };
-  
-        // Start recording with smaller time slices
-        this.mediaRecorder.start(500); // Capture every 500ms
-        
-      } catch (error) {
-        console.error('Error starting recording:', error);
-        throw error;
+  private micRecorder: MediaRecorder | null = null;
+  private systemRecorder: MediaRecorder | null = null;
+  private micStream: MediaStream | null = null;
+  private systemStream: MediaStream | null = null;
+  private websocket: WebSocket | null = null;
+  private clientId: string;
+  private onTranscriptCallback: ((text: string, type: 'microphone' | 'system') => void) | null = null;
+
+  constructor() {
+    this.clientId = crypto.randomUUID();
+  }
+
+  async startRecording(onTranscript: (text: string, type: 'microphone' | 'system') => void): Promise<void> {
+    try {
+      this.onTranscriptCallback = onTranscript;
+
+      // Request microphone and system audio streams
+      this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({ audio: true });
+      const audioTrack = displayStream.getAudioTracks()[0];
+      this.systemStream = new MediaStream([audioTrack]);
+
+      // Initialize WebSocket
+      this.websocket = new WebSocket(`ws://localhost:8000/ws/${this.clientId}`);
+      this.websocket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === 'transcript' && this.onTranscriptCallback) {
+          this.onTranscriptCallback(data.text, data.audioType);
+        }
+      };
+
+      // Set up recorders for microphone and system audio
+      this.setupRecorder(this.micStream, 'microphone');
+      if (this.systemStream) {
+        this.setupRecorder(this.systemStream, 'system');
       }
-    }
-  
-    stopRecording(): void {
-      if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
-        this.mediaRecorder.stop();
-      }
-  
-      if (this.stream) {
-        this.stream.getTracks().forEach(track => track.stop());
-        this.stream = null;
-      }
-  
-      if (this.websocket) {
-        this.websocket.close();
-        this.websocket = null;
-      }
-  
-      this.onTranscriptCallback = null;
-    }
-  
-    isRecording(): boolean {
-      return this.mediaRecorder?.state === 'recording';
+    } catch (error) {
+      console.error('Error starting recording:', error);
     }
   }
+
+  private setupRecorder(stream: MediaStream, type: 'microphone' | 'system') {
+    const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+    recorder.ondataavailable = async (event) => {
+      if (this.websocket?.readyState === WebSocket.OPEN && event.data.size > 0) {
+        const arrayBuffer = await event.data.arrayBuffer();
+        this.websocket.send(JSON.stringify({ type, audio: Array.from(new Uint8Array(arrayBuffer)) }));
+      }
+    };
+    recorder.start(500); // Send chunks every 500ms
+
+    if (type === 'microphone') {
+      this.micRecorder = recorder;
+    } else {
+      this.systemRecorder = recorder;
+    }
+  }
+
+  stopRecording(): void {
+    [this.micRecorder, this.systemRecorder].forEach((recorder) => recorder?.stop());
+    [this.micStream, this.systemStream].forEach((stream) =>
+      stream?.getTracks().forEach((track) => track.stop())
+    );
+    this.websocket?.close();
+  }
+}

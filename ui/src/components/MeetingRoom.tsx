@@ -11,13 +11,14 @@ interface MeetingRoomProps {
 export function MeetingRoom({ onBack, meetingId, meetingTitle }: MeetingRoomProps) {
   // State management
   const [isRecording, setIsRecording] = useState(false);
-  const [transcripts, setTranscripts] = useState<string[]>([]);
+  const [transcripts, setTranscripts] = useState<{ type: 'microphone' | 'system'; text: string }[]>([]);
   const [currentTranscript, setCurrentTranscript] = useState<string>('');
   const [status, setStatus] = useState<string>('');
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [actionItems, setActionItems] = useState<string[]>([]);
   const [summary, setSummary] = useState<string>('');
+  
 
   // Refs for managing resources
   const streamRef = useRef<MediaStream | null>(null);
@@ -105,21 +106,14 @@ export function MeetingRoom({ onBack, meetingId, meetingTitle }: MeetingRoomProp
         try {
           const data = JSON.parse(event.data);
           console.log('Received WebSocket message:', data);
-          
+      
           if (data.type === 'transcript') {
             if (data.is_final) {
-              setTranscripts(prev => {
-                if (prev[prev.length - 1] !== data.text) {
-                  return [...prev, data.text];
-                }
-                return prev;
-              });
+              setTranscripts((prev) => [
+                ...prev,
+                { type: data.audioType, text: data.text },
+              ]);
               setCurrentTranscript('');
-              
-              // Check for action items in the transcript
-              if (data.text.toLowerCase().includes('action item')) {
-                setActionItems(prev => [...prev, data.text]);
-              }
             } else {
               setCurrentTranscript(data.text);
             }
@@ -134,6 +128,7 @@ export function MeetingRoom({ onBack, meetingId, meetingTitle }: MeetingRoomProp
           console.error('Error processing message:', error);
         }
       };
+      
 
       ws.onerror = (error) => {
         console.error('WebSocket error:', error);
@@ -276,14 +271,22 @@ export function MeetingRoom({ onBack, meetingId, meetingTitle }: MeetingRoomProp
           <div className="bg-white rounded-xl border p-6 shadow-sm h-[600px] overflow-y-auto">
             <h2 className="text-lg font-medium mb-4">Live Transcript</h2>
             <div className="space-y-2">
-              {transcripts.map((text, index) => (
-                <p key={index} className="text-gray-700">{text}</p>
-              ))}
-              {currentTranscript && (
-                <p className="text-gray-500 italic">{currentTranscript}</p>
-              )}
-              <div ref={transcriptEndRef} />
-            </div>
+  {transcripts.map((transcript, index) => (
+    <p
+      key={index}
+      className={`text-gray-700 ${
+        transcript.type === 'system' ? 'text-blue-500' : ''
+      }`}
+    >
+      [{transcript.type.toUpperCase()}] {transcript.text}
+    </p>
+  ))}
+  {currentTranscript && (
+    <p className="text-gray-500 italic">{currentTranscript}</p>
+  )}
+  <div ref={transcriptEndRef} />
+</div>
+
           </div>
         </div>
 

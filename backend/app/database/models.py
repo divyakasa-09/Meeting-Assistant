@@ -13,17 +13,16 @@ class Meeting(Base):
     end_time = Column(DateTime, nullable=True)
     is_active = Column(Boolean, default=True)
 
-    # Updated relationships with order_by and enhanced cascade options
     transcripts = relationship(
-        "TranscriptSegment", 
+        "TranscriptSegment",
         back_populates="meeting",
         cascade="all, delete-orphan",
-        lazy="selectin",  # This helps with N+1 query issues
-        order_by="TranscriptSegment.timestamp.asc()"  # Explicit ordering
+        lazy="selectin",
+        order_by="TranscriptSegment.timestamp.asc()"
     )
     
     action_items = relationship(
-        "ActionItem", 
+        "ActionItem",
         back_populates="meeting",
         cascade="all, delete-orphan",
         lazy="selectin",
@@ -31,7 +30,7 @@ class Meeting(Base):
     )
     
     summaries = relationship(
-        "Summary", 
+        "Summary",
         back_populates="meeting",
         cascade="all, delete-orphan",
         lazy="selectin",
@@ -39,7 +38,7 @@ class Meeting(Base):
     )
     
     follow_up_questions = relationship(
-        "FollowUpQuestion", 
+        "FollowUpQuestion",
         back_populates="meeting",
         cascade="all, delete-orphan",
         lazy="selectin",
@@ -58,11 +57,12 @@ class TranscriptSegment(Base):
     timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     speaker = Column(String, nullable=True)
     confidence = Column(Float, nullable=True)
+    audio_type = Column(String, nullable=False, default="microphone", index=True)
 
     meeting = relationship("Meeting", back_populates="transcripts")
-    
+
     def __repr__(self):
-        return f"<TranscriptSegment(id={self.id}, text={self.text[:30]}...)>"
+        return f"<TranscriptSegment(id={self.id}, audio_type={self.audio_type}, text={self.text[:30]}...)>"
 
 class ActionItem(Base):
     __tablename__ = "action_items"
@@ -72,13 +72,10 @@ class ActionItem(Base):
     description = Column(Text, nullable=False)
     assigned_to = Column(String, nullable=True)
     due_date = Column(DateTime, nullable=True)
-    status = Column(String, default="pending")
+    status = Column(String, default="pending", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
-    meeting = relationship(
-        "Meeting", 
-        back_populates="action_items"
-    )
+    meeting = relationship("Meeting", back_populates="action_items")
 
     def __repr__(self):
         return f"<ActionItem(id={self.id}, status={self.status})>"
@@ -91,10 +88,7 @@ class Summary(Base):
     summary_text = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
-    meeting = relationship(
-        "Meeting", 
-        back_populates="summaries"
-    )
+    meeting = relationship("Meeting", back_populates="summaries")
 
     def __repr__(self):
         return f"<Summary(id={self.id})>"
@@ -107,10 +101,7 @@ class FollowUpQuestion(Base):
     question_text = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
-    meeting = relationship(
-        "Meeting", 
-        back_populates="follow_up_questions"
-    )
+    meeting = relationship("Meeting", back_populates="follow_up_questions")
 
     def __repr__(self):
         return f"<FollowUpQuestion(id={self.id})>"

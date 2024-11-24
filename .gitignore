@@ -6,3 +6,4 @@ venv/
 backend/venv/
 *.dylib
 *.pkl
+speech-ti-text-api-68030db60479.json
