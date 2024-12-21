@@ -1,4 +1,4 @@
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from typing import Dict, Optional, List
 import uuid
@@ -22,8 +22,8 @@ class MeetingManager:
         try:
             meeting = Meeting(
                 meeting_id=str(uuid.uuid4()),
-                title=title or f"Meeting {datetime.now(UTC).strftime('%Y-%m-%d %H:%M')}",
-                start_time=datetime.now(UTC),
+                title=title or f"Meeting {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}",
+                start_time=datetime.now(timezone.utc),
                 is_active=True
             )
             db.add(meeting)
@@ -45,7 +45,7 @@ class MeetingManager:
             if meeting_id:
                 meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
                 if meeting:
-                    meeting.end_time = datetime.now(UTC)
+                    meeting.end_time = datetime.now(timezone.utc)
                     meeting.is_active = False
                     db.commit()
                     db.refresh(meeting)
@@ -74,7 +74,7 @@ class MeetingManager:
                 segment = TranscriptSegment(
                     meeting_id=meeting_id,
                     text=text,
-                    timestamp=datetime.now(UTC),
+                    timestamp=datetime.now(timezone.utc),
                     speaker=speaker,
                     confidence=confidence
                 )
@@ -104,7 +104,7 @@ class MeetingManager:
                     assigned_to=action_item.assigned_to,
                     due_date=action_item.due_date,
                     status="pending",
-                    created_at=datetime.now(UTC)
+                    created_at=datetime.now(timezone.utc)
                 )
                 db.add(db_action_item)
                 db.commit()
@@ -129,7 +129,7 @@ class MeetingManager:
                 db_question = FollowUpQuestion(
                     meeting_id=meeting_id,
                     question_text=question.question_text,
-                    created_at=datetime.now(UTC)
+                    created_at=datetime.now(timezone.utc)
                 )
                 db.add(db_question)
                 db.commit()
@@ -154,7 +154,7 @@ class MeetingManager:
                 db_summary = Summary(
                     meeting_id=meeting_id,
                     summary_text=summary.summary_text,
-                    created_at=datetime.now(UTC)
+                    created_at=datetime.now(timezone.utc)
                 )
                 db.add(db_summary)
                 db.commit()

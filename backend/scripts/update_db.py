@@ -1,6 +1,6 @@
 import sys
 import os
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 import logging
 
 # Add the parent directory to the Python path
@@ -32,7 +32,7 @@ def update_database():
             # Fix any null start_time values
             null_start_meetings = db.query(Meeting).filter(Meeting.start_time.is_(None)).all()
             for meeting in null_start_meetings:
-                meeting.start_time = datetime.now(UTC)
+                meeting.start_time = datetime.now(timezone.utc)
                 logger.info(f"Fixed start_time for meeting {meeting.id}")
             
             # Fix any null meeting_id values

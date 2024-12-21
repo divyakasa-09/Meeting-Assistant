@@ -2,7 +2,7 @@ import asyncio
 import websockets
 import json
 import requests
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 import logging
 
 # Configure logging
@@ -65,7 +65,7 @@ def test_rest_endpoints():
         action_item_data = {
             "description": "Test action from API",
             "assigned_to": "API Tester",
-            "due_date": datetime.now(UTC).isoformat()
+            "due_date": datetime.now(timezone.utc).isoformat()
         }
         response = requests.post(
             f"{BASE_URL}/meetings/{meeting_id}/action-items",

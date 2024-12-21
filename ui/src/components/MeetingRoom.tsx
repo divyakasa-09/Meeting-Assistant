@@ -1,35 +1,68 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from './ui/button';
-import { MeetingService } from '../services/MeetingService';
+import { AudioRecorder } from '../services/AudioRecorder';
 
 interface MeetingRoomProps {
   onBack: () => void;
-  meetingId: string;     // UUID string for WebSocket
+  meetingId: string;
   meetingTitle?: string;
+}
+
+interface TranscriptItem {
+  type: 'microphone' | 'system';
+  text: string;
+  timestamp?: string;
+}
+
+interface InterimTranscripts {
+  microphone?: string;
+  system?: string;
 }
 
 export function MeetingRoom({ onBack, meetingId, meetingTitle }: MeetingRoomProps) {
   // State management
   const [isRecording, setIsRecording] = useState(false);
-  const [transcripts, setTranscripts] = useState<{ type: 'microphone' | 'system'; text: string }[]>([]);
-  const [currentTranscript, setCurrentTranscript] = useState<string>('');
+  const [transcripts, setTranscripts] = useState<TranscriptItem[]>([]);
+  const [interimTranscripts, setInterimTranscripts] = useState<InterimTranscripts>({});
   const [status, setStatus] = useState<string>('');
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [actionItems, setActionItems] = useState<string[]>([]);
   const [summary, setSummary] = useState<string>('');
-  
 
-  // Refs for managing resources
-  const streamRef = useRef<MediaStream | null>(null);
-  const websocketRef = useRef<WebSocket | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  // Refs
+  const recorderRef = useRef<AudioRecorder | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const durationIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const mountedRef = useRef(true);
 
-  // Timer Effect
+  // Cleanup on unmount
   useEffect(() => {
+    console.log('MeetingRoom mounted with meetingId:', meetingId);
+    mountedRef.current = true;
+
+    return () => {
+      console.log('MeetingRoom component cleanup');
+      mountedRef.current = false;
+      cleanup();
+    };
+  }, [meetingId]);
+
+  const cleanup = useCallback(() => {
+    if (durationIntervalRef.current) {
+      clearInterval(durationIntervalRef.current);
+      durationIntervalRef.current = null;
+    }
+    if (recorderRef.current) {
+      recorderRef.current.stopRecording();
+      recorderRef.current = null;
+    }
+  }, []);
+
+  // Duration timer effect
+  useEffect(() => {
+    if (!mountedRef.current) return;
+
     if (isRecording) {
       durationIntervalRef.current = setInterval(() => {
         setDuration(prev => prev + 1);
@@ -43,174 +76,113 @@ export function MeetingRoom({ onBack, meetingId, meetingTitle }: MeetingRoomProp
     };
   }, [isRecording]);
 
-  // Auto-scroll Effect
+  // Auto-scroll effect
   useEffect(() => {
     if (transcriptEndRef.current) {
       transcriptEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [transcripts, currentTranscript]);
+  }, [transcripts, interimTranscripts]);
 
-  // Cleanup Effect
-  useEffect(() => {
-    console.log('MeetingRoom mounted with meetingId:', meetingId);
-    return () => {
-      stopRecording();
-      cleanup();
-    };
-  }, []);
+  // Styling functions
+  const getTranscriptStyle = () => {
+    return 'text-gray-700 font-medium bg-gray-50 rounded-lg px-3 py-2';
+  };
 
-  const cleanup = () => {
-    if (durationIntervalRef.current) {
-      clearInterval(durationIntervalRef.current);
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-    }
-    if (websocketRef.current) {
-      websocketRef.current.close();
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-    }
+
+  const getInterimStyle = () => {
+    return 'text-gray-400 italic bg-gray-50/50 rounded-lg px-3 py-2';
   };
 
   const startRecording = async () => {
     try {
       setError(null);
-      setStatus('Requesting microphone access...');
-      
-      // Request microphone access
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          sampleRate: 16000,
-          autoGainControl: true,
+      setStatus('Requesting audio access...');
+
+      if (!meetingId) {
+        throw new Error('No meeting ID provided');
+      }
+
+      const recorder = new AudioRecorder(meetingId);
+
+      recorder.setMessageHandler((data) => {
+        if (!mountedRef.current) return;
+
+        if (data.type === 'transcript') {
+          const audioType = data.audioType as 'microphone' | 'system';
+          
+          // Only process if there's actual text content
+          if (data.text && data.text.trim()) {
+            if (data.is_final) {
+              setTranscripts(prev => [...prev, {
+                type: audioType,
+                text: data.text.trim(),
+                timestamp: new Date().toISOString()
+              }]);
+
+              // Clear interim transcript for this source
+              setInterimTranscripts(prev => ({
+                ...prev,
+                [audioType]: undefined
+              }));
+            } else {
+              // Only update interim if text has changed significantly
+              setInterimTranscripts(prev => {
+                const currentText = prev[audioType];
+                const newText = data.text.trim();
+                if (currentText !== newText) {
+                  return {
+                    ...prev,
+                    [audioType]: newText
+                  };
+                }
+                return prev;
+              });
+            }
+          }
+        } else if (data.type === 'status') {
+          setStatus(data.message);
+        } else if (data.type === 'error') {
+          console.error('Server error:', data.message);
+          setError(data.message);
         }
       });
 
-      streamRef.current = stream;
-      setStatus('Connecting to transcription service...');
-
-      // Initialize WebSocket connection
-      const ws = new WebSocket(`ws://localhost:8000/ws/${meetingId}`);
-      websocketRef.current = ws;
-
-      ws.onopen = () => {
-        setStatus('Connected to transcription service');
-        console.log('WebSocket connected');
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          console.log('Received WebSocket message:', data);
-      
-          if (data.type === 'transcript') {
-            if (data.is_final) {
-              setTranscripts((prev) => [
-                ...prev,
-                { type: data.audioType, text: data.text },
-              ]);
-              setCurrentTranscript('');
-            } else {
-              setCurrentTranscript(data.text);
-            }
-          } else if (data.type === 'status') {
-            setStatus(data.message);
-          } else if (data.type === 'error') {
-            console.error('Server error:', data.message);
-            setStatus(`Error: ${data.message}`);
-            setError(data.message);
-          }
-        } catch (error) {
-          console.error('Error processing message:', error);
-        }
-      };
-      
-
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        setStatus('Connection error occurred');
-        setError('Failed to connect to transcription service');
-      };
-
-      ws.onclose = () => {
-        setStatus('Connection closed');
-        setIsRecording(false);
-      };
-
-      // Set up audio processing
-      const audioContext = new AudioContext({ sampleRate: 16000 });
-      audioContextRef.current = audioContext;
-
-      const source = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      processorRef.current = processor;
-
-      processor.onaudioprocess = (e) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          const audioData = e.inputBuffer.getChannelData(0);
-          const int16Array = new Int16Array(audioData.length);
-          
-          for (let i = 0; i < audioData.length; i++) {
-            const s = Math.max(-1, Math.min(1, audioData[i]));
-            int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-          }
-          
-          ws.send(int16Array.buffer);
-        }
-      };
-
-      source.connect(processor);
-      processor.connect(audioContext.destination);
-
+      await recorder.startRecording();
+      recorderRef.current = recorder;
       setIsRecording(true);
-      setStatus('Recording...');
+      setStatus('Recording in progress...');
 
     } catch (error) {
-      console.error('Error starting recording:', error);
-      setStatus(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      setError(error instanceof Error ? error.message : 'Unknown error');
+      console.error('Error in startRecording:', error);
+      setStatus('Failed to start recording');
+      setError(error instanceof Error ? error.message : 'Unknown error occurred');
       setIsRecording(false);
+      cleanup();
     }
   };
 
-  const stopRecording = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
+  const stopRecording = async () => {
+    try {
+      if (recorderRef.current) {
+        await recorderRef.current.stopRecording();
+        recorderRef.current = null;
+      }
+      setIsRecording(false);
+      setStatus('Recording stopped');
 
-    if (processorRef.current) {
-      processorRef.current.disconnect();
-      processorRef.current = null;
-    }
-
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-
-    if (websocketRef.current) {
-      websocketRef.current.close();
-      websocketRef.current = null;
-    }
-
-    setIsRecording(false);
-    setStatus('Recording stopped');
-
-    // Generate summary from transcripts
-    if (transcripts.length > 0) {
-      const summaryText = `Meeting lasted ${formatTime(duration)}. ${transcripts.length} segments were recorded.`;
-      setSummary(summaryText);
+      if (transcripts.length > 0) {
+        const summaryText = `Meeting lasted ${formatTime(duration)}. ${transcripts.length} segments were recorded.`;
+        setSummary(summaryText);
+      }
+    } catch (error) {
+      console.error('Error stopping recording:', error);
+      setError('Failed to stop recording properly');
     }
   };
 
   const handleEndMeeting = async () => {
     try {
-      stopRecording();
+      await stopRecording();
       onBack();
     } catch (error) {
       console.error('Error ending meeting:', error);
@@ -251,13 +223,7 @@ export function MeetingRoom({ onBack, meetingId, meetingTitle }: MeetingRoomProp
           </Button>
           <Button 
             variant={isRecording ? "destructive" : "default"}
-            onClick={() => {
-              if (isRecording) {
-                stopRecording();
-              } else {
-                startRecording();
-              }
-            }}
+            onClick={() => isRecording ? stopRecording() : startRecording()}
           >
             {isRecording ? 'Stop Recording' : 'Start Recording'}
           </Button>
@@ -270,23 +236,30 @@ export function MeetingRoom({ onBack, meetingId, meetingTitle }: MeetingRoomProp
         <div className="md:col-span-2">
           <div className="bg-white rounded-xl border p-6 shadow-sm h-[600px] overflow-y-auto">
             <h2 className="text-lg font-medium mb-4">Live Transcript</h2>
-            <div className="space-y-2">
-  {transcripts.map((transcript, index) => (
-    <p
-      key={index}
-      className={`text-gray-700 ${
-        transcript.type === 'system' ? 'text-blue-500' : ''
-      }`}
+            <div className="space-y-3">
+             {transcripts.map((transcript, index) => (
+  transcript.text && transcript.text.trim() && (
+    <div
+      key={`final-${index}`}
+      className={getTranscriptStyle()}
     >
-      [{transcript.type.toUpperCase()}] {transcript.text}
-    </p>
-  ))}
-  {currentTranscript && (
-    <p className="text-gray-500 italic">{currentTranscript}</p>
-  )}
-  <div ref={transcriptEndRef} />
-</div>
-
+      {transcript.text}
+    </div>
+  )
+))}
+              {/* Interim Transcripts */}
+              {interimTranscripts.system && (
+  <div className={getInterimStyle()}>
+    {interimTranscripts.system}
+  </div>
+)}
+{interimTranscripts.microphone && (
+  <div className={getInterimStyle()}>
+    {interimTranscripts.microphone}
+  </div>
+)}
+              <div ref={transcriptEndRef} />
+            </div>
           </div>
         </div>
 

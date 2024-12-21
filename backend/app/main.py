@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session, joinedload 
 
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 import logging
 import json
 import asyncio
@@ -64,7 +64,7 @@ async def handle_transcript(meeting_id: str, transcript_data: dict, db: Session)
             transcript = TranscriptSegment(
              meeting_id=meeting.id,
              text=transcript_data["text"],
-             timestamp=datetime.now(UTC),
+             timestamp=datetime.now(timezone.utc).isoformat(),
              confidence=transcript_data.get("confidence"),
              speaker=transcript_data.get("speaker"),
              audio_type=transcript_data.get("audioType", "microphone"),  # Default to 'microphone'
@@ -110,10 +110,10 @@ async def websocket_endpoint(
     client_id: str, 
     db: Session = Depends(get_db)
 ):
-    await websocket.accept()
-    logger.info(f"Client connected: {client_id}")
-
     try:
+        await websocket.accept()
+        logger.info(f"Client connected: {client_id}")
+
         # Get the current event loop
         loop = asyncio.get_running_loop()
         
@@ -126,47 +126,74 @@ async def websocket_endpoint(
         )
         
         active_processors[client_id] = processor
-        await processor.start()
+        
+        # Start the processor
+        if not await processor.start():
+            logger.error(f"Failed to start audio processor for client: {client_id}")
+            await websocket.close(code=1011)
+            return
 
-        # Start the processing thread
-        processor.processing_thread = threading.Thread(target=processor._process_audio)
-        processor.processing_thread.start()
-
+        # Send connection confirmation
         await websocket.send_json({
             "type": "status",
             "message": "Connected to transcription service",
             "client_id": client_id
         })
 
+        # Main message processing loop
         while True:
             try:
-                message = await websocket.receive()
+                # Add a shorter timeout for more responsive error handling
+                message = await asyncio.wait_for(websocket.receive(), timeout=30.0)
                 
+                if message["type"] == "websocket.disconnect":
+                    logger.info(f"Client initiated disconnect: {client_id}")
+                    break
+                    
                 if "bytes" in message:
-                    await processor.process_chunk(message["bytes"], "microphone")  # Microphone audio
+                    await processor.process_chunk(message["bytes"], "microphone")
                 elif "text" in message:
-                   data = json.loads(message["text"])
-                   if data.get("type") == "system_audio":
-                      await processor.process_chunk(data["audio"], "system")  # System audio
+                    data = json.loads(message["text"])
+                    if data.get("type") == "audio_meta":
+                        await processor.handle_message(message["text"])
+                    elif data.get("type") == "system_audio":
+                        await processor.process_chunk(data["audio"], "system")
 
+            except asyncio.TimeoutError:
+                # Send a ping to keep the connection alive
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except Exception as e:
+                    logger.error(f"Failed to send ping, assuming disconnected: {e}")
+                    break
+                continue
+                
             except WebSocketDisconnect:
                 logger.info(f"WebSocket disconnected for client: {client_id}")
                 break
+                
             except Exception as e:
                 logger.error(f"Error processing message: {e}")
-                await websocket.send_json({
-                    "type": "error",
-                    "message": str(e)
-                })
+                try:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": str(e)
+                    })
+                except:
+                    break
 
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
+        
     finally:
-        if client_id in active_processors:
-            await active_processors[client_id].stop()
-            del active_processors[client_id]
-        logger.info(f"Client disconnected: {client_id}")
-
+        # Cleanup
+        try:
+            if client_id in active_processors:
+                await active_processors[client_id].stop()
+                del active_processors[client_id]
+            logger.info(f"Client disconnected: {client_id}")
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
 
 @app.post("/meetings/{meeting_id}/test-transcript")
 async def create_test_transcript(meeting_id: str, db: Session = Depends(get_db)):
@@ -183,7 +210,7 @@ async def create_test_transcript(meeting_id: str, db: Session = Depends(get_db))
         transcript = TranscriptSegment(
             meeting_id=meeting.id,
             text="This is a test transcript",
-            timestamp=datetime.now(UTC),
+            timestamp=datetime.now(timezone.utc),
             speaker="Test Speaker"
         )
         
@@ -246,7 +273,7 @@ async def health_check():
         content={
             "status": "healthy",
             "active_connections": len(active_processors),
-            "timestamp": datetime.now(UTC).isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         },
         headers={
             "Access-Control-Allow-Origin": "http://localhost:5173",
@@ -259,8 +286,8 @@ async def create_meeting(title: Optional[str] = None, db: Session = Depends(get_
     try:
         meeting = Meeting(
             meeting_id=str(uuid.uuid4()),
-            title=title or f"Meeting {datetime.now(UTC).strftime('%Y-%m-%d %H:%M')}",
-            start_time=datetime.now(UTC),
+            title=title or f"Meeting {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}",
+            start_time=datetime.now(timezone.utc),
             is_active=True
         )
         db.add(meeting)
@@ -575,7 +602,7 @@ async def create_test_transcripts(meeting_id: str, db: Session = Depends(get_db)
             transcript = TranscriptSegment(
                 meeting_id=meeting.id,
                 text=text,
-                timestamp=datetime.now(UTC),
+                timestamp=datetime.now(timezone.utc),
                 speaker="Test Speaker"
             )
             db.add(transcript)
@@ -607,14 +634,14 @@ async def create_test_transcripts(meeting_id: str, db: Session = Depends(get_db)
 
 @app.delete("/meetings/{meeting_id}")
 async def delete_meeting(meeting_id: str, db: Session = Depends(get_db)):
-    meeting = db.query(models.Meeting).filter(models.Meeting.meeting_id == meeting_id).first()
+    meeting = db.query(Meeting).filter(Meeting.meeting_id == meeting_id).first()
     if meeting is None:
         raise HTTPException(status_code=404, detail="Meeting not found")
     
     db.delete(meeting)
     db.commit()
     return {"message": "Meeting deleted successfully"}
- 
+
 @app.put("/meetings/{meeting_id}/end")
 async def end_meeting(meeting_id: str, db: Session = Depends(get_db)):
     try:
@@ -631,7 +658,7 @@ async def end_meeting(meeting_id: str, db: Session = Depends(get_db)):
         
         logger.info(f"Found meeting {meeting_id}, setting end time and status")
         
-        meeting.end_time = datetime.now(UTC)
+        meeting.end_time = datetime.now(timezone.utc)
         meeting.is_active = False
         
         try:

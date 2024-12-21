@@ -1,6 +1,6 @@
 import requests
 import logging
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 import json
 import sys
 import uuid
