@@ -5,3 +5,4 @@ venv/
 backend/venv/
 *.dylib
 *.pkl
+.env

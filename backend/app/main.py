@@ -10,18 +10,19 @@ import asyncio
 import threading
 from typing import Dict, Optional, List
 import uuid
-
+from .services.ai_service import AIService
+from fastapi import BackgroundTasks
 from .database.models import Meeting, Summary, TranscriptSegment, ActionItem
 from .database import schemas
 from .database.config import SessionLocal, engine
 from .core.audio.processor import EnhancedAudioProcessor
-
+from .services.enhanced_ai_service import EnhancedAIService 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
-
+ai_service = EnhancedAIService()
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
@@ -46,9 +47,12 @@ def get_db():
 async def handle_transcript(meeting_id: str, transcript_data: dict, db: Session):
     """Handle incoming transcript data"""
     try:
-        logger.info(f"Received transcript data for meeting {meeting_id}: {transcript_data}")
+        logger.info(f"START handle_transcript for meeting {meeting_id}")
+        logger.info(f"Transcript data: {transcript_data}")
         
         if transcript_data.get("is_final"):
+            logger.info(f"Processing final transcript for meeting {meeting_id}")
+            
             # Get the meeting first
             meeting = db.query(Meeting)\
                 .filter(Meeting.meeting_id == meeting_id)\
@@ -60,34 +64,49 @@ async def handle_transcript(meeting_id: str, transcript_data: dict, db: Session)
 
             logger.info(f"Found meeting with ID {meeting.id} for transcript")
 
-            # Create transcript with the correct meeting ID
+            # Create transcript
             transcript = TranscriptSegment(
-             meeting_id=meeting.id,
-             text=transcript_data["text"],
-             timestamp=datetime.now(timezone.utc).isoformat(),
-             confidence=transcript_data.get("confidence"),
-             speaker=transcript_data.get("speaker"),
-             audio_type=transcript_data.get("audioType", "microphone"),  # Default to 'microphone'
-                ) 
-
+                meeting_id=meeting.id,
+                text=transcript_data["text"],
+                timestamp=datetime.now(timezone.utc),
+                confidence=transcript_data.get("confidence"),
+                speaker=transcript_data.get("speaker"),
+                audio_type=transcript_data.get("audioType", "microphone")
+            )
             
-            logger.info(f"Created transcript: {transcript.text[:50]}...")
-            
-            db.add(transcript)
-            logger.info("Added transcript to session")
+            logger.info(f"Created transcript object: {transcript.text[:100]}...")
+            logger.info(f"Audio type: {transcript.audio_type}")
             
             try:
+                db.add(transcript)
+                logger.info("Added transcript to session")
+                
                 db.commit()
                 db.refresh(transcript)
                 logger.info(f"Successfully saved transcript with ID {transcript.id}")
+
+                # Verify the transcript was saved
+                saved_transcript = db.query(TranscriptSegment)\
+                    .filter(TranscriptSegment.id == transcript.id)\
+                    .first()
+                    
+                if saved_transcript:
+                    logger.info("Verified transcript was saved correctly")
+                else:
+                    logger.error("Failed to verify saved transcript")
+
             except Exception as commit_error:
                 logger.error(f"Error committing transcript: {commit_error}")
+                logger.exception(commit_error)  # Log full stack trace
+                logger.exception(e) 
                 db.rollback()
                 raise
             
     except Exception as e:
         logger.error(f"Error handling transcript: {e}")
+        logger.exception(e)  # Log full stack trace
         db.rollback()
+        
 
 def verify_transcript_saved(db: Session, meeting_id: int, text: str) -> bool:
     """Verify if a transcript was saved successfully"""
@@ -117,7 +136,7 @@ async def websocket_endpoint(
         # Get the current event loop
         loop = asyncio.get_running_loop()
         
-        # Initialize the enhanced audio processor with the loop
+        # Initialize the enhanced audio processor
         processor = EnhancedAudioProcessor(
             websocket=websocket,
             client_id=client_id,
@@ -133,17 +152,14 @@ async def websocket_endpoint(
             await websocket.close(code=1011)
             return
 
-        # Send connection confirmation
         await websocket.send_json({
             "type": "status",
             "message": "Connected to transcription service",
             "client_id": client_id
         })
 
-        # Main message processing loop
         while True:
             try:
-                # Add a shorter timeout for more responsive error handling
                 message = await asyncio.wait_for(websocket.receive(), timeout=30.0)
                 
                 if message["type"] == "websocket.disconnect":
@@ -151,20 +167,22 @@ async def websocket_endpoint(
                     break
                     
                 if "bytes" in message:
+                    logger.info(f"Received audio chunk from {client_id} size: {len(message['bytes'])}")
                     await processor.process_chunk(message["bytes"], "microphone")
                 elif "text" in message:
                     data = json.loads(message["text"])
+                    logger.info(f"Received text message from {client_id}: {data.get('type')}")
                     if data.get("type") == "audio_meta":
                         await processor.handle_message(message["text"])
                     elif data.get("type") == "system_audio":
+                        logger.info(f"Processing system audio chunk size: {len(data['audio'])}")
                         await processor.process_chunk(data["audio"], "system")
 
             except asyncio.TimeoutError:
-                # Send a ping to keep the connection alive
                 try:
                     await websocket.send_json({"type": "ping"})
                 except Exception as e:
-                    logger.error(f"Failed to send ping, assuming disconnected: {e}")
+                    logger.error(f"Failed to send ping: {e}")
                     break
                 continue
                 
@@ -174,6 +192,7 @@ async def websocket_endpoint(
                 
             except Exception as e:
                 logger.error(f"Error processing message: {e}")
+                logger.exception(e)  # This will log the full stack trace
                 try:
                     await websocket.send_json({
                         "type": "error",
@@ -184,16 +203,18 @@ async def websocket_endpoint(
 
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
+        logger.exception(e)
         
     finally:
-        # Cleanup
         try:
             if client_id in active_processors:
                 await active_processors[client_id].stop()
                 del active_processors[client_id]
-            logger.info(f"Client disconnected: {client_id}")
+            logger.info(f"Client disconnected and cleanup completed: {client_id}")
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
+            logger.exception(e)
+
 
 @app.post("/meetings/{meeting_id}/test-transcript")
 async def create_test_transcript(meeting_id: str, db: Session = Depends(get_db)):
@@ -581,6 +602,7 @@ async def get_meeting_transcripts(meeting_id: str, db: Session = Depends(get_db)
     except Exception as e:
         logger.error(f"Error fetching transcripts: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    
 @app.post("/meetings/{meeting_id}/test-transcripts")
 async def create_test_transcripts(meeting_id: str, db: Session = Depends(get_db)):
     try:
@@ -631,7 +653,147 @@ async def create_test_transcripts(meeting_id: str, db: Session = Depends(get_db)
         db.rollback()
         logger.error(f"Error creating test transcripts: {e}")
         raise HTTPException(status_code=500, detail=str(e))    
+    
+@app.post("/meetings/{meeting_id}/generate-summary")
+async def generate_meeting_summary(
+    meeting_id: str,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Find the meeting
+        meeting = db.query(Meeting).filter(Meeting.meeting_id == meeting_id).first()
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
 
+        # Get all transcripts for the meeting
+        transcripts = db.query(TranscriptSegment)\
+            .filter(TranscriptSegment.meeting_id == meeting.id)\
+            .order_by(TranscriptSegment.timestamp.asc())\
+            .all()
+
+        if not transcripts:
+            raise HTTPException(status_code=400, detail="No transcripts found for meeting")
+
+        # Prepare messages for GPT
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a meeting assistant. Provide a clear and concise summary of the meeting, highlighting key points, decisions, and action items."
+            },
+            {
+                "role": "user",
+                "content": f"Please summarize this meeting transcript: \n\n{' '.join([t.text for t in transcripts])}"
+            }
+        ]
+
+        # Generate summary using OpenAI
+        summary_text = await ai_service.process_with_retry(messages)
+
+        if summary_text:
+            # Save summary to database
+            summary = Summary(
+                meeting_id=meeting.id,
+                summary_text=summary_text,
+            )
+            db.add(summary)
+            db.commit()
+            db.refresh(summary)
+
+            return JSONResponse(
+                content={
+                    "status": "success",
+                    "meeting_id": meeting_id,
+                    "summary": summary_text
+                },
+                headers={
+                    "Access-Control-Allow-Origin": "http://localhost:5173",
+                    "Access-Control-Allow-Credentials": "true",
+                }
+            )
+        else:
+            raise HTTPException(status_code=500, detail="Failed to generate summary")
+
+    except Exception as e:
+        logger.error(f"Error generating summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Add endpoint for getting AI service usage stats
+@app.get("/ai-usage-stats")
+async def get_ai_usage_stats():
+    try:
+        stats = ai_service.get_usage_stats()
+        return JSONResponse(
+            content=stats,
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:5173",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error getting AI usage stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Optionally, add an endpoint for real-time summary updates during the meeting
+@app.post("/meetings/{meeting_id}/progressive-summary")
+async def generate_progressive_summary(
+    meeting_id: str,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Get the most recent transcripts (e.g., last 5 minutes)
+        meeting = db.query(Meeting)\
+            .filter(Meeting.meeting_id == meeting_id)\
+            .first()
+            
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+
+        recent_transcripts = db.query(TranscriptSegment)\
+            .filter(
+                TranscriptSegment.meeting_id == meeting.id,
+                TranscriptSegment.timestamp >= datetime.now(timezone.utc) - timedelta(minutes=5)
+            )\
+            .order_by(TranscriptSegment.timestamp.asc())\
+            .all()
+
+        if not recent_transcripts:
+            return JSONResponse(
+                content={
+                    "status": "no_update",
+                    "message": "No recent transcripts to summarize"
+                }
+            )
+
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a real-time meeting assistant. Provide a brief summary of the recent discussion points."
+            },
+            {
+                "role": "user",
+                "content": f"Summarize the recent discussion: \n\n{' '.join([t.text for t in recent_transcripts])}"
+            }
+        ]
+
+        summary_text = await ai_service.process_with_retry(messages)
+        
+        if summary_text:
+            return JSONResponse(
+                content={
+                    "status": "success",
+                    "meeting_id": meeting_id,
+                    "progressive_summary": summary_text
+                },
+                headers={
+                    "Access-Control-Allow-Origin": "http://localhost:5173",
+                    "Access-Control-Allow-Credentials": "true",
+                }
+            )
+
+    except Exception as e:
+        logger.error(f"Error generating progressive summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
 @app.delete("/meetings/{meeting_id}")
 async def delete_meeting(meeting_id: str, db: Session = Depends(get_db)):
     meeting = db.query(Meeting).filter(Meeting.meeting_id == meeting_id).first()
@@ -687,7 +849,49 @@ async def end_meeting(meeting_id: str, db: Session = Depends(get_db)):
         logger.error(f"Error ending meeting: {e}")
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.post("/meetings/{meeting_id}/live-insights")
+async def generate_live_insights(
+    meeting_id: str,
+    db: Session = Depends(get_db)
+):
+    try:
+        logger.info(f"Generating insights for meeting {meeting_id}")
+        meeting = db.query(Meeting).filter(Meeting.meeting_id == meeting_id).first()
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
 
+        # Get recent transcripts
+        recent_transcripts = db.query(TranscriptSegment)\
+            .filter(TranscriptSegment.meeting_id == meeting.id)\
+            .order_by(TranscriptSegment.timestamp.desc())\
+            .limit(10)\
+            .all()
+
+        transcript_texts = [t.text for t in recent_transcripts]
+        
+        logger.info(f"Processing {len(transcript_texts)} transcript segments")
+        
+        # Generate insights using AI service
+        summary = await ai_service.generate_progressive_summary(transcript_texts)
+        logger.info(f"Generated summary: {summary}")
+        
+        questions = await ai_service.generate_followup_questions(' '.join(transcript_texts))
+        logger.info(f"Generated questions: {questions}")
+        
+        action_items = await ai_service.extract_action_items(' '.join(transcript_texts))
+        logger.info(f"Generated action items: {action_items}")
+
+        return JSONResponse(content={
+            "summary": json.loads(summary) if summary else None,
+            "questions": json.loads(questions) if questions else None,
+            "action_items": json.loads(action_items) if action_items else None
+        })
+
+    except Exception as e:
+        logger.error(f"Error generating live insights: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

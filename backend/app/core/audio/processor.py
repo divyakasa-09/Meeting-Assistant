@@ -155,6 +155,8 @@ class EnhancedAudioProcessor:
 
             while self.is_running:
                 try:
+                    logger.info(f"Starting streaming recognition for client: {self.client_id}")
+   
                     responses = self.speech_client.streaming_recognize(
                         streaming_config, 
                         request_generator()
@@ -182,25 +184,36 @@ class EnhancedAudioProcessor:
                                 "text": transcript,
                                 "is_final": is_final,
                                 "confidence": confidence,
-                                "audioType": self.current_audio_type or "unknown"  # Use tracked audio type
+                                "audioType": self.current_audio_type or "unknown", # Use tracked audio type
+                                "timestamp": datetime.now().isoformat()
                             }
-
+                            logger.info(f"Generated transcript for client {self.client_id}: {transcript[:50]}...")
                             # Send through WebSocket
-                            future = asyncio.run_coroutine_threadsafe(
-                                self.send_websocket_message(message),
-                                self.loop
-                            )
-                            future.result(timeout=1)
+                            try:
+                                future = asyncio.run_coroutine_threadsafe(
+                                    self.send_websocket_message(message),
+                                    self.loop
+                              )
+                                future.result(timeout=1)
+                                logger.debug("Sent transcript through WebSocket")
+                            except Exception as ws_error:
+                                logger.error(f"WebSocket send error: {ws_error}")
 
                             if is_final:
-                                future = asyncio.run_coroutine_threadsafe(
-                                    self.on_transcript(message),
-                                    self.loop
+                                try:
+                                    logger.info(f"Calling on_transcript for final transcript: {transcript[:50]}...")
+                                    future = asyncio.run_coroutine_threadsafe(
+                                       self.on_transcript(message),
+                                       self.loop
                                 )
-                                future.result(timeout=1)
+                                    future.result(timeout=1)
+                                    logger.debug("Successfully processed final transcript")
+                                except Exception as callback_error:
+                                    logger.error(f"Callback error: {callback_error}")    
 
+                      
                 except Exception as e:
-                    logger.error(f"Error in speech API communication: {e}", exc_info=True)
+                    logger.error(f"Error in speech API communication for client {self.client_id}: {e}", exc_info=True)
                     if self.is_running:
                         time.sleep(1)  # Wait before retrying
                         continue
