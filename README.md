@@ -29,6 +29,27 @@ Meeting Assistant AI is a real-time meeting transcription and analysis applicati
 - **Platform-Specific APIs**: Integrates with Zoom SDK, Microsoft Graph API (Teams), and Google Meet's browser features to fetch meeting metadata and support automated recording.
 - **Audio and Video Context**: Processes both audio and video streams for enhanced meeting insights, such as speaker activity detection and video-based interaction analysis.
 
+## Technical Architecture Details
+
+### Audio Processing Pipeline
+- Dual stream processing (microphone and system audio)
+- Buffer management with 150ms synchronization
+- Noise reduction and speech detection algorithms
+- Real-time audio quality control
+
+### Fault Tolerance & Error Handling
+- Exponential backoff for API retries
+- Dead connection detection
+- Automatic WebSocket reconnection
+- Rate limiting for API stability
+
+### Performance Optimizations
+- Chunked audio processing (4096 samples)
+- Efficient NumPy array operations
+- Memory management for long-running sessions
+- Token-based API optimization
+
+
 ---
 
 ## Technologies Used
