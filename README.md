@@ -4,7 +4,11 @@
 Meeting Assistant AI is a real-time meeting transcription and analysis application. It captures live audio from the microphone and system, transcribes it using Google Speech-to-Text, and generates actionable insights such as meeting summaries, follow-up questions, and action items. The application provides a seamless interface for managing live transcripts and insights during a meeting. It is designed to be used during Zoom, Google Meet, and Microsoft Teams meetings when users join via a browser, allowing seamless integration with virtual meeting platforms.
 
 ---
+### Architecture Diagram
+![System Architecture](assets/System_Architecture.png)
 
+### Database Diagram
+![Database Architecture](assets/db_architecture.png)
 ## Features
 ### Real-Time Capabilities
 - **Live Dual Audio Input Handling**: Processes audio from both the system and microphone.
